@@ -1,0 +1,1 @@
+# `PasthlY` - A Python "Paste As Hard Link" Nautilus Extension
