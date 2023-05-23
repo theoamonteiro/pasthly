@@ -1,15 +1,17 @@
 # `PasthlY` - A Python "Paste As Hard Link" Nautilus Extension
 
-This project creates an Nautilus Extension to make avalible the possibility to instead of pasting a copy of files (<Control>V) in Nautilus (Gnome Files), create hard links to files (<Shift><Control>V) on the clipboard.
+This project creates an Nautilus Extension to make avalible the possibility to instead of pasting a copy of files (`<Control>V`) in Nautilus (Gnome Files), create hard links to files (`<Shift><Control>V`) on the clipboard.
 
 # Dependencies
 
-- python3-nautilus 1.2.3: `sudo apt install python3-nautilus`
-- pytperclip 1.8.2: `pip install pyperclip=1.8.2`
+- Python 3: `3.11.3`
+- PyGObject: `3.24.38`
+- gobject-introspection: `3.44.1`
+- python3-nautilus: `1.2.3`
 
 # Known Issues
 
-- It (_only_) works with Nautilus 42 and python3-nautilus 1.2.3
+- It (_only_) works with Nautilus `42` and python3-nautilus `1.2.3`
   - GTK 3 (`gi.required_version('Gtk', '3.0')`) and Nautilus 3 (`gi.required_version('Nautilus', '3.0')`)
 - It won't work on Nautilus `43.beta` or later.
 
@@ -17,12 +19,10 @@ This project creates an Nautilus Extension to make avalible the possibility to i
 
 # Setup on a Conda Environment
 
-### New Enviroment
-`conda env create --name $NEW_CONDA_ENV_NAME --file environment.yml`
-
-### Existing Enviroment
-
-`conda env update --name $MY_CONDA_ENV_NAME --file environment.yml`
+```shell
+conda env create --name $NEW_CONDA_ENV_NAME --file environment.yml
+pip install -r dependencies.txt
+```
 
 ## python3-nautilus
 
