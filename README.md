@@ -8,6 +8,7 @@ This project creates an Nautilus Extension to make avalible the possibility to i
 - PyGObject: `3.24.38`
 - gobject-introspection: `3.44.1`
 - python3-nautilus: `1.2.3`
+- PyYAML: `6.0`
 
 # Known Issues
 
