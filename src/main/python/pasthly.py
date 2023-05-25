@@ -94,8 +94,14 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
 
     def get_background_items(self, window, folder) -> list[Nautilus.MenuItem]:
         path = self.extract_path(folder)
-        if path != self.destination:
+        if path and path != self.destination:
             self.destination = path
+        if not folder.can_write():
+            self.logger.warning("PasthlY can't write on the destination folder: %s", folder)
+            return []
+        for file in self.files_from_clipboard():
+            if file.stat().st_dev != self.destination.stat().st_dev:
+                return []
         menuitem = Nautilus.MenuItem(name='Pasthly::paste_as_hard_link', 
                                          label='Paste as Hard Link', 
                                          tip='<Shift><Control>V',
@@ -165,8 +171,6 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
         if not folder.is_directory():
             self.logger.warning('%s(%s) should be a directory/folder', folder, folder.get_uri())
             return None
-        if not folder.can_write():
-            self.logger.warning("PasthlY can't write on the destination folder: %s", folder)
         path = folder.get_location()
         if not path:
             self.logger.warning('Folder location should be non-None')
