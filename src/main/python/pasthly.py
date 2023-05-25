@@ -11,6 +11,8 @@ gi.require_version('Nautilus', '3.0')
 from gi.repository import Nautilus, GObject, Gtk, Gdk, GLib
 from yaml import safe_load
 
+
+SCRIPT_NAME = 'pasthly.py'
 logger = None
 locations = [
         Path('/usr/share/nautilus-python/extensions'),
@@ -21,7 +23,7 @@ locations = [
     ]
 
 __NAUTILUS_PYTHON_DEBUG = os.getenv('NAUTILUS_PYTHON_DEBUG', None)
-if __NAUTILUS_PYTHON_DEBUG == 'misc':
+if __NAUTILUS_PYTHON_DEBUG == 'misc' or __name__ == '__main__':
     log_configs = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -73,7 +75,7 @@ if __NAUTILUS_PYTHON_DEBUG == 'misc':
                 data = safe_load(file)
             log_configs = log_configs | data
             logging.config.dictConfig(log_configs)
-    logger.info('Final log configs: %s', log_configs)
+    logger.debug('Final log configs: %s', log_configs)
 
 
 class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetProvider):
@@ -190,15 +192,14 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
         return []
         
 
-def __install():
-    global logger
+def install(logger=None):
     logger = logger if logger else logging.getLogger(__name__)
     self = Path(__file__)
     for folder in locations:
         if not folder.exists():
             logger.info("'%s' doesn't exist.", folder)
             continue
-        script = folder / self.name
+        script = folder / SCRIPT_NAME
         if script.exists():
             logger.info("PasthlY (apparently) alreay installed at '%s'", script)
             return 0
@@ -213,7 +214,7 @@ def __install():
             logger.exception("Couldn't copy '%s' to '%s'", self, script)
             continue
     logger.error("No avaliable location for instalation.")
-    if locations[-1]:
+    if not locations[-1]:
         logger.info("TIP: try to create '%s'", locations[-1])
     return 0
 
@@ -221,14 +222,14 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog='PasthlY',
+        prog=SCRIPT_NAME,
         description='A Python "Paste As Hard Link" Nautilus Extension',
         epilog='See https://github.com/theoamonteiro/pasthly')
     parser.add_argument('--install', action='store_true', required=True)
 
     args = parser.parse_args(sys.argv[1:])
 
-    return __install()
+    return install()
 
 
 if __name__ == '__main__':
