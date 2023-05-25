@@ -18,6 +18,14 @@ This project creates an Nautilus Extension to make avalible the possibility to i
 
 ---
 
+# Install
+
+```shell
+TMP_FILE=$(mktemp); curl 'https://raw.githubusercontent.com/theoamonteiro/pasthly/master/src/main/python/pasthly.py' 2> /dev/null > $TMP_FILE ; python $TMP_FILE --install ; rm -f $TMP_FILE
+```
+
+---
+
 # Setup on a Conda Environment
 
 ```shell
