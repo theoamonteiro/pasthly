@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 import sys
 import os
+import time
+
 import logging
 import logging.config
+
+from enum import Enum
+from collections import abc
 from datetime import datetime
 from pathlib import Path
-import gi
-gi.require_version('Gtk', '3.0')
-gi.require_version('Nautilus', '3.0')
-from gi.repository import Nautilus, GObject, Gtk, Gdk, GLib
 from yaml import safe_load
 
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Pango', '1.0')
+gi.require_version('Nautilus', '3.0')
+from gi.repository import Nautilus, GObject, Gtk, Gdk, GLib, Pango
 
-SCRIPT_NAME = 'pasthly.py'
+NAME = 'pasthly'
+SCRIPT_NAME = NAME + '.py'
 logger = None
 locations = [
         Path('/usr/share/nautilus-python/extensions'),
@@ -29,13 +36,16 @@ if __NAUTILUS_PYTHON_DEBUG == 'misc' or __name__ == '__main__':
         'disable_existing_loggers': False,
         'formatters': {
             'standard': {
-                'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+                'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+                'datefmt': '%Y-%m-%dT%H:%M:%S%z',
             },
         },
         'handlers': {
             'default': {
                 'level':'INFO',
                 'class':'logging.StreamHandler',
+                'stream': 'ext://sys.stdout',
+                'formatter': 'standard',
             },
         },
         'loggers': {
@@ -81,13 +91,14 @@ if __NAUTILUS_PYTHON_DEBUG == 'misc' or __name__ == '__main__':
 class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetProvider):
 
     def __init__(self, logger=None):
+        self.logger = logger if logger else logging.getLogger(__name__)
         self.accel_group = Gtk.AccelGroup()
         keyval, modifier = Gtk.accelerator_parse('<Shift><Control>V')
         self.accel_group.connect(keyval, modifier, Gtk.AccelFlags.VISIBLE,
                                          self._handle_shortcut)
         self.window = None
         self.destination = None
-        self.logger = logger or logging.getLogger(__name__)
+        self.progressbar = None
 
     def get_file_items(self, window, files) -> list[Nautilus.MenuItem]:
         return None # Do not show while files selected
@@ -112,6 +123,8 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
     def get_widget(self, uri, window):
         if self.window:
             self.window.remove_accel_group(self.accel_group)
+        if not self.progressbar:
+            self.progressbar = PasthlyProgressBar(window)
         window.add_accel_group(self.accel_group)
         self.window = window
         return None
@@ -204,12 +217,16 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
         if duplicated:
             text = '\n'.join(["Those files already exist:"] + [str(d.absolute()) for d in duplicated])
             raise PasthlyError(text, code=2, title="PasthlY doesn't overwrite")
-        try:
-            for link, file in destinations:
-                link.hardlink_to(file)
-        except OSError as ose:
-            message = "Could not finish the creation of the hard links"
-            raise PasthlyError(message, code=10, title='Unexpected Error') from ose
+        paster = Paster()
+        paster.subscribe(Paster.Signal.BEFORE_ALL, lambda *args: self.progressbar.start(len(destinations)))
+        paster.subscribe(Paster.Signal.BEFORE_EACH, self.progressbar.update)
+        paster.subscribe(Paster.Signal.AFTER_EACH, lambda *args: self.progressbar.tick(None))
+        paster.subscribe(Paster.Signal.AFTER_EACH, lambda *args: delay(50))
+        paster.subscribe(Paster.Signal.AFTER_ALL, lambda *args: self.progressbar.hide())
+        paster.subscribe(Paster.Signal.ON_CRASH, lambda *args: self.handle_error(args[-1]) or self.progressbar.hide())
+        self.progressbar.on_cancel = paster.cancel
+        paster.process(destinations)
+        self.logger.info('%s with %s links of %s created in %sms', paster.status, paster.count, len(destinations), paster.duration)
         return []
 
 class PasthlyError(Exception):
@@ -220,6 +237,129 @@ class PasthlyError(Exception):
         self.title = title
         self.message = message
 
+class PasthlyProgressBar(Gtk.Dialog):
+
+    def __init__(self, parent, logger=None):
+        super().__init__(title="Paste as Hard Link", transient_for=parent, flags=Gtk.DialogFlags.MODAL)
+        self.logger = logger if logger else logging.getLogger(__name__)
+        self.progressbar = Gtk.ProgressBar()
+        self.cancel_button = Gtk.Button(label="Cancel")
+        self.step = 0.01
+        self.timeout_id = None
+        self.on_cancel = None
+        self.box = self.get_content_area()
+        
+        self.box.add(self.progressbar)
+        self.box.add(self.cancel_button)
+        self.box.pack_start(self.progressbar, True, True, 0)
+        
+        self.progressbar.set_show_text(True)
+        self.progressbar.set_ellipsize(Pango.EllipsizeMode.END)
+
+        self.cancel_button.connect("clicked", self.cancel)
+    
+    def start(self, quantity):
+        self.step = 1 / quantity
+        self.show_all()
+
+    def update(self, link, file):
+        text = f"Creating '{link}' to '{file}'"
+        self.progressbar.set_text(text)
+        self.logger.debug(text)
+
+    def tick(self, data):
+        progress = self.progressbar.get_fraction() + self.step
+        if progress > 1.0:
+            progress = 1
+        self.progressbar.set_fraction(progress)
+        self.logger.debug('one more tick at the progress bar')
+        return self.timeout_id is not None
+
+    def hide(self):
+        super().hide()
+        if self.timeout_id:
+            GLib.Source.remove(self.timeout_id)
+            self.timeout_id = None
+
+    def cancel(self, *args):
+        if self.on_cancel:
+            self.on_cancel()
+
+class Paster:
+
+    Status = Enum('Status', ['IDLE', 'BUSY', 'CRASHED', 'CANCELLED', 'DONE'])
+    Signal = Enum('Signal', ['BEFORE_ALL', 'BEFORE_EACH', 'AFTER_EACH', 'AFTER_ALL', 'ON_CRASH'])
+
+    def __init__(self, logger=None):
+        self.logger = logger if logger else logging.getLogger(__name__)
+        self.listeners = {}
+        self.status = Paster.Status.IDLE
+        self.start_time = None
+        self.end_time = None
+
+    @property
+    def idle(self) -> bool:
+        return self.status == Paster.Status.IDLE
+
+    @property
+    def busy(self) -> bool:
+        return self.status == Paster.Status.BUSY
+
+    @property
+    def duration(self) -> int:
+        if self.end_time and self.start_time:
+            return (self.end_time - self.start_time) * 1000
+        return None
+
+    def process(self, links):
+        if not self.idle:
+            raise Exception('Paster is not idle to process')
+        self.start_time = time.time()
+        self.status = Paster.Status.BUSY
+        self.notify(Paster.Signal.BEFORE_ALL, links)
+        for self.count, pair in enumerate(links, start=1):
+            link, file = pair
+            self.notify(Paster.Signal.BEFORE_EACH, link, file)
+            try:
+                if not self.busy:
+                    break
+                link.hardlink_to(file)
+            except OSError as ose:
+                self.status = Paster.Status.CRASHED
+                self.notify(Paster.Signal.ON_CRASH, link, file, self.count, ose)
+                break
+            self.notify(Paster.Signal.AFTER_EACH, link, file)
+        else:
+            self.status = Paster.Status.DONE
+        self.notify(Paster.Signal.AFTER_ALL, links, self.count)
+        self.end_time = time.time()
+        return self.count
+
+    def get(self, key: Signal) -> list[abc.Callable]:
+        listeners = self.listeners.get(key, [])
+        if not listeners:
+            self.listeners[key] = listeners
+        return listeners
+
+    def subscribe(self, signal: Signal, listener: abc.Callable):
+        self.get(signal).append(listener)
+
+    def notify(self, signal, *args):
+        for listener in self.get(signal):
+            try:
+                listener(*args)
+            except Exception as e:
+                self.logger.exception('Error while notifing %s to %s', signal, listener)
+
+    def cancel(self):
+        if not self.busy:
+            raise Exception('Paster is not busy to be cancelled')
+        self.status = Paster.Status.CANCELLED
+
+def delay(milliseconds):
+    start = time.time() * 1000
+    while (time.time() * 1000) - start < milliseconds:
+        Gtk.main_iteration()
 
 def install(logger=None):
     logger = logger if logger else logging.getLogger(__name__)
