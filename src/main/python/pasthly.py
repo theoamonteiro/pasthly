@@ -42,7 +42,7 @@ if __NAUTILUS_PYTHON_DEBUG == 'misc' or __name__ == '__main__':
         },
         'handlers': {
             'default': {
-                'level':'INFO',
+                'level':'DEBUG',
                 'class':'logging.StreamHandler',
                 'stream': 'ext://sys.stdout',
                 'formatter': 'standard',
@@ -51,7 +51,7 @@ if __NAUTILUS_PYTHON_DEBUG == 'misc' or __name__ == '__main__':
         'loggers': {
             '': {
                 'handlers': ['default'],
-                'level': 'INFO',
+                'level': 'DEBUG',
                 'propagate': True
             }
         }
@@ -110,7 +110,10 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
         if not folder.can_write():
             self.logger.warning("PasthlY can't write on the destination folder: %s", folder)
             return []
-        for file in self.files_from_clipboard():
+        files = self.files_from_clipboard()
+        if not files:
+            return []
+        for file in files:
             if file.stat().st_dev != self.destination.stat().st_dev:
                 return []
         menuitem = Nautilus.MenuItem(name='Pasthly::paste_as_hard_link', 
@@ -139,6 +142,8 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
 
     def handle_paste(self):
         files = self.files_from_clipboard()
+        if not files:
+            return False
         try:
             self.paste_as_hard_link(files, self.destination)
         except PasthlyError as e:
@@ -166,15 +171,18 @@ class Pasthly(GObject.GObject, Nautilus.MenuProvider, Nautilus.LocationWidgetPro
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         lines = clipboard.wait_for_text()
         if lines is None:
+            self.logger.warn("Nothing on the clipboard")
             return []
         lines = lines.split('\n')
         files = [file for file in [Path(line) for line in lines] if file.exists()]
         if not files:
+            self.logger.warn("There is no files on the clipboard")
             return []
         mismatches = [f for f in files if f.parent != files[0].parent]
         if mismatches:
             self.logger.warn("Files from diferent parent folder: %s", mismatches)
             return []
+        self.logger.debug('Files on the clipboard to paste:\n%s', '\n'.join(str(f) for f in files))
         return files
 
     def extract_path(self, folder):
